@@ -1,0 +1,23 @@
+Software Requirements:
+Arduino IDE (latest stable version recommended)
+Python
+
+Required Arduino libraries:
+ESP32 Board Package (via Arduino Boards Manager)
+WiFi Library (ESP32 built-in)
+Camera Library for ESP32-CAM
+TinyGPS++ (for GPS module integration)
+
+Hardware Requirements:
+ESP32-CAM
+ESP32-CAM MB Base
+ESP32-CAM Connector
+Power Bank (optional)
+Buzzer Module
+NEO-6M GPS Module
+Push Button Switch
+
+Additional Notes:
+Ensure proper USB drivers are installed for the ESP32-CAM programming interface.
+Use a stable 5V power supply when operating the ESP32-CAM to avoid brownout issues.
+Verify correct pin connections for GPS (TX/RX), buzzer, and push button before deployment.
