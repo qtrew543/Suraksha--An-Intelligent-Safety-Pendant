@@ -1,0 +1,261 @@
+#include <WiFi.h>
+#include <HTTPClient.h>
+#include <esp_camera.h>
+
+// ===== WiFi Credentials =====
+const char* ssid = "Hello World";
+const char* password = "12345678";
+
+// ===== Telegram Bot Details =====
+String BOT_TOKEN = "8467886608:AAEHwc9dvcO5ICe1pDm5Tm0MbfwttBELDlI"; // From @BotFather
+String CHAT_ID = "-5040255263"; // From @userinfobot or group
+
+// ===== ESP32-CAM Pin Configuration =====
+#define PWDN_GPIO_NUM     32
+#define RESET_GPIO_NUM    -1
+#define XCLK_GPIO_NUM      0
+#define SIOD_GPIO_NUM     26
+#define SIOC_GPIO_NUM     27
+#define Y9_GPIO_NUM       35
+#define Y8_GPIO_NUM       34
+#define Y7_GPIO_NUM       39
+#define Y6_GPIO_NUM       36
+#define Y5_GPIO_NUM       21
+#define Y4_GPIO_NUM       19
+#define Y3_GPIO_NUM       18
+#define Y2_GPIO_NUM        5
+#define VSYNC_GPIO_NUM    25
+#define HREF_GPIO_NUM     23
+#define PCLK_GPIO_NUM     22
+#define FLASH_PIN          4   // Built-in flash LED
+#define BUTTON_PIN        12   // Panic button
+#define BUZZER_PIN        13   // Buzzer pin
+
+WiFiServer server(80);
+
+// ===== Function to URL-Encode Telegram Messages =====
+String urlEncode(String text) {
+  String encoded = "";
+  char c;
+  for (int i = 0; i < text.length(); i++) {
+    c = text.charAt(i);
+    if (c == ' ') encoded += "%20";
+    else if (c == '!') encoded += "%21";
+    else if (c == '#') encoded += "%23";
+    else if (c == '$') encoded += "%24";
+    else if (c == '%') encoded += "%25";
+    else if (c == '&') encoded += "%26";
+    else if (c == '\'') encoded += "%27";
+    else if (c == '(') encoded += "%28";
+    else if (c == ')') encoded += "%29";
+    else if (c == '*') encoded += "%2A";
+    else if (c == '+') encoded += "%2B";
+    else if (c == ',') encoded += "%2C";
+    else if (c == '/') encoded += "%2F";
+    else if (c == ':') encoded += "%3A";
+    else if (c == ';') encoded += "%3B";
+    else if (c == '=') encoded += "%3D";
+    else if (c == '?') encoded += "%3F";
+    else if (c == '@') encoded += "%40";
+    else if (c == '[') encoded += "%5B";
+    else if (c == ']') encoded += "%5D";
+    else encoded += c;
+  }
+  return encoded;
+}
+
+// ===== Function to Send Telegram Message =====
+void sendTelegramAlert(String message) {
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("WiFi not connected!");
+    return;
+  }
+
+  HTTPClient http;
+  String encodedMessage = urlEncode(message);
+  String url = "https://api.telegram.org/bot" + BOT_TOKEN +
+               "/sendMessage?chat_id=" + CHAT_ID +
+               "&text=" + encodedMessage;
+
+  http.begin(url);
+  int httpCode = http.GET();
+
+  if (httpCode > 0) {
+    String payload = http.getString();
+    Serial.println("Telegram Response: " + payload);
+  } else {
+    Serial.println("Error sending Telegram message.");
+  }
+  http.end();
+}
+
+// ===== Buzzer Helper =====
+void buzzerBeep(int onMs = 200, int offMs = 100, int repeats = 1) {
+  for (int i = 0; i < repeats; i++) {
+    digitalWrite(BUZZER_PIN, HIGH);
+    delay(onMs);
+    digitalWrite(BUZZER_PIN, LOW);
+    if (i < repeats - 1) delay(offMs);
+  }
+}
+
+// ===== Setup =====
+void setup() {
+  Serial.begin(115200);
+  Serial.setDebugOutput(true);
+
+  pinMode(FLASH_PIN, OUTPUT);
+  digitalWrite(FLASH_PIN, LOW);
+  pinMode(BUTTON_PIN, INPUT_PULLUP);
+  pinMode(BUZZER_PIN, OUTPUT);
+  digitalWrite(BUZZER_PIN, LOW);
+
+  // --- Camera Config ---
+  camera_config_t config;
+  config.ledc_channel = LEDC_CHANNEL_0;
+  config.ledc_timer = LEDC_TIMER_0;
+  config.pin_d0 = Y2_GPIO_NUM;
+  config.pin_d1 = Y3_GPIO_NUM;
+  config.pin_d2 = Y4_GPIO_NUM;
+  config.pin_d3 = Y5_GPIO_NUM;
+  config.pin_d4 = Y6_GPIO_NUM;
+  config.pin_d5 = Y7_GPIO_NUM;
+  config.pin_d6 = Y8_GPIO_NUM;
+  config.pin_d7 = Y9_GPIO_NUM;
+  config.pin_xclk = XCLK_GPIO_NUM;
+  config.pin_pclk = PCLK_GPIO_NUM;
+  config.pin_vsync = VSYNC_GPIO_NUM;
+  config.pin_href = HREF_GPIO_NUM;
+  config.pin_sscb_sda = SIOD_GPIO_NUM;
+  config.pin_sscb_scl = SIOC_GPIO_NUM;
+  config.pin_pwdn = PWDN_GPIO_NUM;
+  config.pin_reset = RESET_GPIO_NUM;
+  config.xclk_freq_hz = 20000000;
+  config.pixel_format = PIXFORMAT_JPEG;
+
+  if (psramFound()) {
+    config.frame_size = FRAMESIZE_SVGA;
+    config.jpeg_quality = 10;
+    config.fb_count = 2;
+  } else {
+    config.frame_size = FRAMESIZE_SVGA;
+    config.jpeg_quality = 12;
+    config.fb_count = 1;
+  }
+
+  // Initialize camera
+  esp_err_t err = esp_camera_init(&config);
+  if (err != ESP_OK) {
+    Serial.printf("Camera init failed with error 0x%x", err);
+    return;
+  }
+
+  // Connect WiFi
+  Serial.println("Connecting to WiFi...");
+  WiFi.begin(ssid, password);
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+  Serial.println("\n✅ WiFi connected!");
+  Serial.print("📶 IP Address: http://");
+  Serial.println(WiFi.localIP());
+
+  server.begin();
+
+  // Initial Telegram message + short buzzer confirmation
+  sendTelegramAlert("🚨 EMERGENCY! Please help! Location: https://maps.app.goo.gl/1H6G7F5udzoZ3F8H7");
+  buzzerBeep(100, 50, 2);
+}
+
+// ===== Handle Flash Control =====
+void handleFlashControl(WiFiClient &client, bool state) {
+  digitalWrite(FLASH_PIN, state);
+  buzzerBeep(80, 0, 1);
+  client.println("HTTP/1.1 200 OK");
+  client.println("Content-type: text/html");
+  client.println();
+  client.println("<html><body>");
+  client.println("<h1>Flash is now " + String(state ? "ON" : "OFF") + "</h1>");
+  client.println("<p><a href='/'>Back</a></p>");
+  client.println("</body></html>");
+}
+
+// ===== Handle Live Stream =====
+void handleStream(WiFiClient &client) {
+  client.println("HTTP/1.1 200 OK");
+  client.println("Content-type: multipart/x-mixed-replace; boundary=frame");
+  client.println();
+
+  while (client.connected()) {
+    camera_fb_t *fb = esp_camera_fb_get();
+    if (!fb) {
+      Serial.println("Camera capture failed");
+      break;
+    }
+
+    client.println("--frame");
+    client.println("Content-Type: image/jpeg");
+    client.println("Content-Length: " + String(fb->len));
+    client.println();
+    client.write(fb->buf, fb->len);
+    client.println();
+
+    esp_camera_fb_return(fb);
+    delay(100);
+  }
+}
+
+// ===== Web Page UI =====
+void handleRoot(WiFiClient &client) {
+  client.println("HTTP/1.1 200 OK");
+  client.println("Content-type: text/html");
+  client.println();
+  client.println("<html><head>");
+  client.println("<meta name='viewport' content='width=device-width, initial-scale=1'>");
+  client.println("<style>");
+  client.println("body { font-family: Arial; text-align: center; margin-top: 20px; }");
+  client.println("button { background-color: #4CAF50; color: white; padding: 12px 24px; border: none; cursor: pointer; }");
+  client.println(".flash-on { background-color: #f44336; }");
+  client.println("</style></head><body>");
+  client.println("<h1>ESP32-CAM Live Stream</h1>");
+  client.println("<img src='/stream' width='80%'><br><br>");
+  client.println("<a href='/flash_on'><button class='flash-on'>FLASH ON</button></a>");
+  client.println("<a href='/flash_off'><button>FLASH OFF</button></a>");
+  client.println("</body></html>");
+}
+
+// ===== Loop =====
+void loop() {
+  // ---- Handle Panic Button ----
+  static unsigned long lastAlert = 0;
+  if (digitalRead(BUTTON_PIN) == LOW && millis() - lastAlert > 10000) {
+    Serial.println("🚨 Panic button pressed!");
+    sendTelegramAlert("🚨 EMERGENCY! Please help! Location: https://maps.app.goo.gl/1H6G7F5udzoZ3F8H7");
+    buzzerBeep(200, 100, 3);
+    lastAlert = millis();
+    delay(500);
+  }
+
+  // ---- Handle Web Server ----
+  WiFiClient client = server.available();
+  if (client) {
+    Serial.println("New Client");
+    String request = client.readStringUntil('\r');
+    client.flush();
+
+    if (request.indexOf("GET /flash_on") != -1) {
+      handleFlashControl(client, HIGH);
+    } else if (request.indexOf("GET /flash_off") != -1) {
+      handleFlashControl(client, LOW);
+    } else if (request.indexOf("GET /stream") != -1) {
+      handleStream(client);
+    } else {
+      handleRoot(client);
+    }
+
+    client.stop();
+    Serial.println("Client disconnected");
+  }
+}
+//GROUP ONE
